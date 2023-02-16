@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "RxDownloader"
 include ':app'
+include ':lib_rxdownloader'

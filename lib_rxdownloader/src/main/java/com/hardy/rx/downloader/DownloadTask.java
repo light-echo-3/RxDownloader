@@ -1,10 +1,12 @@
-package com.changba.plugin.livechorus.download;
+package com.hardy.rx.downloader;
 
 import android.text.TextUtils;
+import android.util.Log;
 
-import com.changba.library.commonUtils.KTVLog;
-import com.changba.plugin.livechorus.download.model.ProgressModel;
-import com.changba.plugin.livechorus.download.model.StateModel;
+import androidx.annotation.IntDef;
+
+import com.hardy.rx.downloader.model.ProgressModel;
+import com.hardy.rx.downloader.model.StateModel;
 
 import java.io.File;
 import java.io.IOException;
@@ -14,7 +16,6 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import androidx.annotation.IntDef;
 import io.reactivex.Observable;
 import io.reactivex.schedulers.Schedulers;
 import io.reactivex.subjects.PublishSubject;
@@ -51,10 +52,10 @@ public class DownloadTask {
 
     public DownloadTask(String downloadUrl, String localFileName, float weight) {
         if (TextUtils.isEmpty(downloadUrl)) {
-            KTVLog.e(TAG, "DownloadTask: 传入的url为空，localFileName = " + localFileName);
+            Log.e(TAG, "DownloadTask: 传入的url为空，localFileName = " + localFileName);
         }
         if (TextUtils.isEmpty(localFileName)) {
-            KTVLog.e(TAG, "DownloadTask: 传入的本地文件路径为空，downloadUrl = " + downloadUrl);
+            Log.e(TAG, "DownloadTask: 传入的本地文件路径为空，downloadUrl = " + downloadUrl);
         }
         client = new OkHttpClient();
         progressSubject = PublishSubject.<ProgressModel>create().toSerialized();
@@ -142,9 +143,9 @@ public class DownloadTask {
         if(tempFile.exists()){
             //如果文件存在的话，得到文件的大小
             downloadLength = tempFile.length();
-            KTVLog.d(TAG, "download: 本地临时文件大小：" + downloadLength);
+            Log.d(TAG, "download: 本地临时文件大小：" + downloadLength);
         }
-        KTVLog.d(TAG, "download: server文件总大小：" + serverContentLength);
+        Log.d(TAG, "download: server文件总大小：" + serverContentLength);
         if(serverContentLength == downloadLength){
             notifyDownloadSuccess();
             tempFile.renameTo(new File(localFileName));
@@ -177,12 +178,12 @@ public class DownloadTask {
                     //计算已经下载的百分比
                     progressModel.setProgress((total + downloadLength) / (float)serverContentLength * 100f);
                     progressSubject.onNext(progressModel);
-                    KTVLog.d("----Download", "progress--0: " + progressModel.getProgress());
+                    Log.d("----Download", "progress--0: " + progressModel.getProgress());
                 }
                 response.body().close();
                 float progress = progressModel.getProgress();
                 if (progress > 100) {
-                    KTVLog.e(TAG, "download: progress =" + progress);
+                    Log.e(TAG, "download: progress =" + progress);
                     new RuntimeException("progress =" + progress + "下载的文件大小 > server给的大小");
                 }
                 if (progress == 100) {

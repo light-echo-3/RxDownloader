@@ -1,4 +1,4 @@
-package com.changba.plugin.livechorus.download;
+package com.hardy.rx.downloader;
 
 /**
  * @author Hdq on 2021/3/10.

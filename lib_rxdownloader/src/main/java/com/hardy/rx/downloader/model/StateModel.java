@@ -1,6 +1,6 @@
-package com.changba.plugin.livechorus.download.model;
+package com.hardy.rx.downloader.model;
 
-import com.changba.plugin.livechorus.download.DownloadTask;
+import com.hardy.rx.downloader.DownloadTask;
 
 /**
  * @author Hdq on 2021/9/8.

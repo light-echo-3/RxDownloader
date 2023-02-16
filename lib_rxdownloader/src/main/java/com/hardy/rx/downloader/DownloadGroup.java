@@ -1,7 +1,9 @@
-package com.changba.plugin.livechorus.download;
+package com.hardy.rx.downloader;
 
-import com.changba.library.commonUtils.KTVLog;
-import com.changba.plugin.livechorus.download.model.ProgressModel;
+
+import android.util.Log;
+
+import com.hardy.rx.downloader.model.ProgressModel;
 
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
@@ -103,7 +105,7 @@ public class DownloadGroup {
                         @Override
                         public void onNext(DownloadTask downloadTask) {
                             count++;
-                            KTVLog.d(TAG, "onNext: 从队列中取出一个下载任务 count = " + count);
+                            Log.d(TAG, "onNext: 从队列中取出一个下载任务 count = " + count);
                             try {
                                 lock.writeLock().lock();
                                 waitingTasks.remove(downloadTask);
@@ -118,7 +120,7 @@ public class DownloadGroup {
                                     }, throwable -> {//onError
                                         throwable.printStackTrace();
                                     }, () -> {//onCompleted
-                                        KTVLog.d(TAG, "下载完成onCompleted: ");
+                                        Log.d(TAG, "下载完成onCompleted: ");
                                         if (downloadQueueSubscription != null) {
                                             downloadQueueSubscription.request(1);
                                         }
@@ -126,9 +128,9 @@ public class DownloadGroup {
                             ));
 
                             try {
-                                KTVLog.d(TAG, "onNext: 开线程执行下载");
+                                Log.d(TAG, "onNext: 开线程执行下载");
                                 executor.execute(() -> {
-                                    KTVLog.d(TAG, "downloadTask.start - thread name=" + Thread.currentThread());
+                                    Log.d(TAG, "downloadTask.start - thread name=" + Thread.currentThread());
                                     try {
                                         downloadTask.startSync();
                                     } catch (Exception e) {
@@ -136,7 +138,7 @@ public class DownloadGroup {
                                     }
                                 });
                             } catch (Exception e) {
-                                KTVLog.e(TAG, "线程池错误", e);
+                                Log.e(TAG, "线程池错误", e);
                                 downloadTask.notifyError(e);
                             }
                         }
@@ -229,10 +231,10 @@ public class DownloadGroup {
                 lock.writeLock().unlock();
             }
             downloadTaskSubject.onNext(task);
-            KTVLog.d(TAG, "enqueue: downloadUrl=" + downloadUrl + ",localFileName=" + localFileName);
+            Log.d(TAG, "enqueue: downloadUrl=" + downloadUrl + ",localFileName=" + localFileName);
         } else {
             task.setOnlyCheckLocalFileExit(isOnlyCheckLocalFileExit);
-            KTVLog.w(TAG, "enqueue: 下载任务已存在 downloadUrl=" + downloadUrl + ",localFileName=" + localFileName);
+            Log.w(TAG, "enqueue: 下载任务已存在 downloadUrl=" + downloadUrl + ",localFileName=" + localFileName);
         }
         return task;
     }
@@ -293,7 +295,7 @@ public class DownloadGroup {
         } finally {
             lock.readLock().unlock();
         }
-        KTVLog.d(TAG, "progress-----1: " + avgProgress);
+        Log.d(TAG, "progress-----1: " + avgProgress);
         return avgProgress;
     }
 
@@ -315,7 +317,7 @@ public class DownloadGroup {
                 lock.readLock().unlock();
             }
             isReComputeTotalWeight.getAndSet(false);
-            KTVLog.d(TAG, "getTotalWeight: " + totalWeight);
+            Log.d(TAG, "getTotalWeight: " + totalWeight);
         }
         return totalWeight;
     }

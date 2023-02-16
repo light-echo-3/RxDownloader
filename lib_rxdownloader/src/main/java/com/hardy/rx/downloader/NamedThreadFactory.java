@@ -1,4 +1,4 @@
-package com.changba.plugin.livechorus.download;
+package com.hardy.rx.downloader;
 
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
