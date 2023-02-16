@@ -1,6 +1,6 @@
-package com.hardy.rx.downloader.model;
+package com.wuzhu.rx.downloader.model;
 
-import com.hardy.rx.downloader.DownloadTask;
+import com.wuzhu.rx.downloader.DownloadTask;
 
 /**
  * @author Hdq on 2021/9/8.

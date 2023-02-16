@@ -4,7 +4,8 @@ plugins {
 }
 
 android {
-    namespace 'com.hardy.rx.downloader'
+    namespace 'com.wuzhu.rx.downloader'
+    compileSdk 33
 
     defaultConfig {
 

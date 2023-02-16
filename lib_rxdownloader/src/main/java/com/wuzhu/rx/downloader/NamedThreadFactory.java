@@ -1,4 +1,4 @@
-package com.hardy.rx.downloader;
+package com.wuzhu.rx.downloader;
 
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;

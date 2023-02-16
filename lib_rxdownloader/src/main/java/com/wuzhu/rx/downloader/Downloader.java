@@ -1,11 +1,11 @@
-package com.hardy.rx.downloader;
+package com.wuzhu.rx.downloader;
 
 /**
  * @author Hdq on 2021/3/10.
  */
 public class Downloader {
     private static final String TAG = "----Downloader";
-    private static DownloadGroup defaultDownloadGroup;
+    private static volatile DownloadGroup defaultDownloadGroup;
     public static DownloadGroup defaultDownloadGroup(){
         if (defaultDownloadGroup == null) {
             synchronized (Downloader.class){

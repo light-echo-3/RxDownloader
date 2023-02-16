@@ -1,4 +1,4 @@
-package com.hardy.rxdownloader
+package com.wuzhu.rxdownloader
 
 import org.junit.Test
 

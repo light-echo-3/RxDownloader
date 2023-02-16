@@ -1,4 +1,4 @@
-package com.hardy.rxdownloader
+package com.wuzhu.rxdownloader.demo
 
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle

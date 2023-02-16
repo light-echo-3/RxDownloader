@@ -4,15 +4,17 @@ plugins {
 }
 
 android {
-    namespace 'com.hardy.rxdownloader'
+    namespace 'com.wuzhu.rxdownloader.demo'
     compileSdk 33
 
     defaultConfig {
-        applicationId "com.hardy.rxdownloader"
+        applicationId "com.wuzhu.rxdownloader.demo"
         minSdk 16
         targetSdk 33
         versionCode 1
         versionName "1.0"
+
+        multiDexEnabled true
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -46,4 +48,5 @@ dependencies {
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
 
     implementation 'io.reactivex.rxjava2:rxjava:2.2.20'
+
 }

@@ -1,12 +1,12 @@
-package com.hardy.rx.downloader;
+package com.wuzhu.rx.downloader;
 
 import android.text.TextUtils;
 import android.util.Log;
 
 import androidx.annotation.IntDef;
 
-import com.hardy.rx.downloader.model.ProgressModel;
-import com.hardy.rx.downloader.model.StateModel;
+import com.wuzhu.rx.downloader.model.ProgressModel;
+import com.wuzhu.rx.downloader.model.StateModel;
 
 import java.io.File;
 import java.io.IOException;

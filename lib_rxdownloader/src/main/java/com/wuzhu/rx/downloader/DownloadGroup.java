@@ -1,9 +1,9 @@
-package com.hardy.rx.downloader;
+package com.wuzhu.rx.downloader;
 
 
 import android.util.Log;
 
-import com.hardy.rx.downloader.model.ProgressModel;
+import com.wuzhu.rx.downloader.model.ProgressModel;
 
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;

@@ -1,4 +1,4 @@
-package com.hardy.rxdownloader
+package com.wuzhu.rxdownloader
 
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
