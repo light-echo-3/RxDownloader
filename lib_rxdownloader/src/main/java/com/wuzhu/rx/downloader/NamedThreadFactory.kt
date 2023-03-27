@@ -1,11 +1,13 @@
 package com.wuzhu.rx.downloader
 
+import androidx.annotation.Keep
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * @author Hdq on 2021/3/10.
  */
+@Keep
 class NamedThreadFactory(name: String) : ThreadFactory {
     private val poolNumber = AtomicInteger(1)
     private val group: ThreadGroup?

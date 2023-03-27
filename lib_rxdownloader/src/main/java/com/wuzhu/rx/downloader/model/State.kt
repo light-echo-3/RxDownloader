@@ -1,6 +1,7 @@
 package com.wuzhu.rx.downloader.model
 
 import androidx.annotation.IntDef
+import androidx.annotation.Keep
 
 @Target(
     AnnotationTarget.CLASS,
@@ -10,6 +11,7 @@ import androidx.annotation.IntDef
 )
 @IntDef(State.PREPARE, State.START, State.DOWNLOADING, State.SUCCESS, State.STOPPED, State.ERROR)
 @Retention(AnnotationRetention.SOURCE)
+@Keep
 annotation class State {
 
     companion object {
@@ -29,7 +31,7 @@ annotation class State {
                 SUCCESS -> "SUCCESS"
                 STOPPED -> "STOPPED"
                 ERROR -> "ERROR"
-                else -> "/"
+                else -> "/unknown"
             }
         }
     }

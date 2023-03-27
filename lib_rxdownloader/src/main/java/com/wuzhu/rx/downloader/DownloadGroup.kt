@@ -1,6 +1,7 @@
 package com.wuzhu.rx.downloader
 
 import android.util.Log
+import androidx.annotation.Keep
 import com.wuzhu.rx.downloader.model.*
 import io.reactivex.BackpressureOverflowStrategy
 import io.reactivex.BackpressureStrategy
@@ -9,6 +10,7 @@ import io.reactivex.observers.DisposableObserver
 import io.reactivex.schedulers.Schedulers
 import io.reactivex.subjects.BehaviorSubject
 import io.reactivex.subjects.ReplaySubject
+import okhttp3.OkHttpClient
 import org.reactivestreams.Subscriber
 import org.reactivestreams.Subscription
 import java.io.File
@@ -17,7 +19,7 @@ import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
-private const val TAG = "----DownloadGroup"
+private const val TAG = "---DownloadGroup"
 
 /**
  * @author Hdq on 2021/3/9.
@@ -25,7 +27,11 @@ private const val TAG = "----DownloadGroup"
  * https://github.com/lingochamp/FileDownloader/blob/master/README-zh.md
  * @param limit 最大并发下载数量
  */
-class DownloadGroup(private val limit: Int) {
+@Keep
+class DownloadGroup constructor(private val limit: Int) {
+    lateinit var key: String
+    var client: OkHttpClient? = null
+    private val mHeaders = mutableMapOf<String, String>()
     private val business by lazy { DownloadGroupBusiness() }
 
     private val progressSubject = BehaviorSubject.create<GroupProgressModel>().toSerialized()
@@ -120,7 +126,7 @@ class DownloadGroup(private val limit: Int) {
     }
 
     private fun registerDownloadProgress(downloadTask: DownloadTask) {
-        downloadTask.getProgressObservable().sample(10, TimeUnit.MILLISECONDS,true).subscribe(object : DisposableObserver<TaskProgressModel>() {
+        downloadTask.getProgressObservable().sample(10, TimeUnit.MILLISECONDS, true).subscribe(object : DisposableObserver<TaskProgressModel>() {
             override fun onNext(t: TaskProgressModel) {
                 progressModel.progress = business.getGroupProgress()
                 progressSubject.onNext(progressModel)
@@ -139,7 +145,7 @@ class DownloadGroup(private val limit: Int) {
     private fun handleDownloadState(taskStateModel: TaskStateModel) {
         when (taskStateModel.state) {
             State.PREPARE -> {}
-            State.START,State.DOWNLOADING -> {
+            State.START, State.DOWNLOADING -> {
                 groupStateModel.state = taskStateModel.state
                 stateSubject.onNext(groupStateModel)
             }
@@ -156,18 +162,20 @@ class DownloadGroup(private val limit: Int) {
     }
 
 
-    fun create() {
+    fun create(key: String, client: OkHttpClient? = null) {
         Log.w(TAG, "create: $this")
+        this.key = key
+        this.client = client
         synchronized(lifecycleLock) {
             if (isCreated) {
                 return
             }
             downloadTaskSubject.toFlowable(BackpressureStrategy.BUFFER).onBackpressureBuffer(Long.MAX_VALUE, {
-                    Log.e(TAG, "背压队列溢出，删除最新的数据::超过能处理的最大下载量，会丢失下载任务")
-                }, BackpressureOverflowStrategy.DROP_LATEST).onErrorReturn {
-                    it.printStackTrace()
-                    business.emptyTask
-                }.observeOn(Schedulers.io(), false, Flowable.bufferSize() * 2)//buffer是背压缓存队列大小
+                Log.e(TAG, "背压队列溢出，删除最新的数据::超过能处理的最大下载量，会丢失下载任务")
+            }, BackpressureOverflowStrategy.DROP_LATEST).onErrorReturn {
+                it.printStackTrace()
+                business.emptyTask
+            }.observeOn(Schedulers.io(), false, Flowable.bufferSize() * 2)//buffer是背压缓存队列大小
                 .subscribe(object : Subscriber<DownloadTask> {
                     override fun onSubscribe(s: Subscription) {
                         downloadQueueSubscription = s
@@ -238,16 +246,16 @@ class DownloadGroup(private val limit: Int) {
 
     @JvmOverloads
     fun addTask(
-        downloadUrl: String, localFileName: String, weight: Float = 1f, isOnlyCheckLocalFileExit: Boolean = false
+        downloadUrl: String, localFileName: String, weight: Float = 1f, md5: String? = null
     ): DownloadTask {
         synchronized(lifecycleLock) {
             var task = findTask(downloadUrl)
             if (task == null) {
                 Log.w(TAG, "addTask::任务不存在准备新建下载任务")
-                task = createTask(downloadUrl, localFileName, weight, isOnlyCheckLocalFileExit)
+                task = createTask(downloadUrl, localFileName, weight, md5)
                 produce(task)
             } else {
-                task.isOnlyCheckLocalFileExit = isOnlyCheckLocalFileExit
+                task.md5 = md5
                 Log.w(TAG, "addTask::下载任务已存在，进入reDownloadTask，判断是否需要重新下载")
                 reDownloadTask(task)
             }
@@ -288,10 +296,13 @@ class DownloadGroup(private val limit: Int) {
 
 
     private fun createTask(
-        downloadUrl: String, localFileName: String, weight: Float = 1f, isOnlyCheckLocalFileExit: Boolean = false
+        downloadUrl: String, localFileName: String, weight: Float = 1f, md5: String? = null
     ): DownloadTask {
-        val task = DownloadTask(downloadUrl, localFileName, weight)
-        task.isOnlyCheckLocalFileExit = isOnlyCheckLocalFileExit
+        val task = DownloadTask()
+        task.create(downloadUrl, localFileName, weight)
+        task.client = client
+        task.addHeaders(mHeaders)
+        task.md5 = md5
         business.allTasks.add(task)
         business.isReComputeTotalWeight.getAndSet(true)
         //订阅进度 - 只订阅一次
@@ -305,14 +316,23 @@ class DownloadGroup(private val limit: Int) {
     fun findTask(url: String): DownloadTask? = business.findTask(url)
 
     fun getProgressObservable(): Flowable<GroupProgressModel> = progressSubject.toFlowable(BackpressureStrategy.LATEST).onBackpressureBuffer(10000, {
-            Log.e(TAG, "背压队列溢出，删除最旧的数据")
-        }, BackpressureOverflowStrategy.DROP_OLDEST).sample(100, TimeUnit.MILLISECONDS,true)
+        Log.e(TAG, "背压队列溢出，删除最旧的数据")
+    }, BackpressureOverflowStrategy.DROP_OLDEST).sample(100, TimeUnit.MILLISECONDS, true).onErrorReturn {
+        it.printStackTrace()
+        progressModel
+    }
 
+    @Suppress("unused")
     fun getProgress() = progressModel.progress
 
     fun getStateObservable(): Flowable<GroupStateModel> = stateSubject.toFlowable(BackpressureStrategy.LATEST).onBackpressureBuffer(10000, {
-            Log.e(TAG, "背压队列溢出，删除最旧的数据")
-        }, BackpressureOverflowStrategy.DROP_OLDEST)
+        Log.e(TAG, "背压队列溢出，删除最旧的数据")
+    }, BackpressureOverflowStrategy.DROP_OLDEST).onErrorReturn {
+        it.printStackTrace()
+        groupStateModel.state = State.ERROR
+        groupStateModel.exception = it
+        groupStateModel
+    }
 
     fun getState() = groupStateModel.state
 
@@ -320,5 +340,15 @@ class DownloadGroup(private val limit: Int) {
         return "DownloadGroup::${this.hashCode()}(isCreated=$isCreated, isStarted=$isStarted)"
     }
 
+    fun hasTasks() = business.allTasks.isNotEmpty()
+
+    fun addHeader(key: String, value: String) {
+        mHeaders[key] = value
+    }
+
+    @Suppress("unused")
+    fun addHeaders(headers: Map<String, String>) {
+        mHeaders.putAll(headers)
+    }
 
 }

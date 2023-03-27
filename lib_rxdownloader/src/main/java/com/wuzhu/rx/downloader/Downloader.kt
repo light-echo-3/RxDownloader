@@ -1,15 +1,26 @@
 package com.wuzhu.rx.downloader
 
+import android.util.Log
+import androidx.annotation.Keep
 import com.wuzhu.rx.downloader.exceptions.DownloadException
+import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * @author Hdq on 2021/3/10.
  */
+@Keep
 object Downloader {
     private const val TAG = "----Downloader"
     private val downloadGroups = ConcurrentHashMap<String, DownloadGroup>()
+    var client: OkHttpClient? = null
+
+    @JvmStatic
+    fun init(client: OkHttpClient?) {
+        Log.d(TAG, "init: ")
+        this.client = client
+    }
 
     /**
      * 最大并发下载数量
@@ -25,7 +36,7 @@ object Downloader {
             throw DownloadException("key重复：：以key=$key 创建的任务已经存在")
         }
         val downloadGroup = DownloadGroup(limit)
-        downloadGroup.create()
+        downloadGroup.create(key, client)
         downloadGroups[key] = downloadGroup
         return downloadGroup
     }
@@ -85,7 +96,7 @@ object Downloader {
     }
 
     @JvmStatic
-    fun deleteTempFile(localFile: String):Boolean {
+    fun deleteTempFile(localFile: String): Boolean {
         val tempFile = File(DownloadTask.getTempFileName(localFile))
         if (tempFile.exists()) {
             return tempFile.delete()

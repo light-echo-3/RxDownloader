@@ -1,6 +1,7 @@
 package com.wuzhu.rx.downloader
 
 import android.util.Log
+import androidx.annotation.Keep
 import com.wuzhu.rx.downloader.model.State
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
@@ -10,11 +11,12 @@ private const val TAG = "----DownloadGroup"
 /**
  * 业务实现相关代码
  */
+@Keep
 class DownloadGroupBusiness {
     /**
      * 这个空任务用户处理异常情况，不会进入下载流程
      */
-    val emptyTask = DownloadTask("empty_", "empty__", 0f)
+    val emptyTask = DownloadTask()
 
     /***
      * 等待下载的队列
@@ -63,6 +65,7 @@ class DownloadGroupBusiness {
      *
      * @return
      */
+    @Suppress("unused")
     fun isAllTaskDownloadSuccess(): Boolean {
         allTasks.forEach {
             if (it.getState() != State.SUCCESS) {
@@ -81,7 +84,7 @@ class DownloadGroupBusiness {
         return null
     }
 
-
+    @Suppress("unused")
     fun destroyTask(task: DownloadTask) {
         downloadingTasks.remove(task)
         allTasks.remove(task)

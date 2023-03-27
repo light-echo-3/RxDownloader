@@ -1,9 +1,12 @@
 package com.wuzhu.rx.downloader
 
 import android.util.Log
+import androidx.annotation.Keep
+import com.wuzhu.rx.downloader.exceptions.DownloadException
 import com.wuzhu.rx.downloader.model.State
 import com.wuzhu.rx.downloader.model.TaskProgressModel
 import com.wuzhu.rx.downloader.model.TaskStateModel
+import com.wuzhu.rx.downloader.utils.MD5Utils
 import io.reactivex.Observable
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.schedulers.Schedulers
@@ -11,19 +14,21 @@ import io.reactivex.subjects.BehaviorSubject
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.io.*
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.InputStream
+import java.io.RandomAccessFile
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * @author Hdq on 2021/3/9.
  */
-class DownloadTask @JvmOverloads constructor(
-    downloadUrl: String, localFileName: String, weight: Float = 1f
-) {
+@Keep
+class DownloadTask {
 
     companion object {
-        private const val TAG = "----DownloadTask"
+        private const val TAG = "---DownloadTask"
 
         @JvmStatic
         internal fun getTempFileName(localFileName: String): String {
@@ -45,34 +50,45 @@ class DownloadTask @JvmOverloads constructor(
      * 这里提前new出来，避免使用时候频繁创建对象
      */
     private val taskStateModel = TaskStateModel(this)
-    private val client = OkHttpClient.Builder().connectTimeout(15 * 1000, TimeUnit.MILLISECONDS).build()
     private var downloadCall: Call? = null
-    private var getLengthCall: Call? = null
     private val isStop = AtomicBoolean(false)
-    var downloadUrl: String
-    var localFileName: String
-    var weight: Float//记录该任务的权重值.用于多个任务在一起时候计算总进度
-
+    lateinit var downloadUrl: String
+    lateinit var localFileName: String
+    var weight: Float = 1f//记录该任务的权重值.用于多个任务在一起时候计算总进度
 
     /**
      * 是否仅检查本地文件是否存在
-     * true:仅检查本地文件是否存在
-     * false:会通过网络检查文件是否已下载，从server拉取文件长度，检查本地文件长度是否一致，一致则认为下载完成
+     * true:仅检查本地文件是否存在，如果存在，就不下载
+     * fixme 鸡肋功能，可改成md5检测
      */
-    var isOnlyCheckLocalFileExit = false
+    var md5: String? = null
 
-    init {
+    var client: OkHttpClient? = null
+        get() {
+            field ?: run {
+                field = OkHttpClient.Builder().connectTimeout(15 * 1000, TimeUnit.MILLISECONDS).build()
+            }
+            return field
+        }
+
+    private val mHeaders = mutableMapOf<String, String>()
+
+    fun create(downloadUrl: String, localFileName: String, weight: Float = 1f) {
         if (downloadUrl.isBlank()) {
-            Log.e(TAG, "DownloadTask: 传入的url为空，localFileName = $localFileName")
+            throwException("DownloadTask: 传入的url为空，localFileName = $localFileName")
         }
         if (localFileName.isBlank()) {
-            Log.e(TAG, "DownloadTask: 传入的本地文件路径为空，downloadUrl = $downloadUrl")
+            throwException("DownloadTask: 传入的本地文件路径为空，downloadUrl = $downloadUrl")
+        }
+        if (weight <= 0) {
+            throwException("DownloadTask: fileLength不能<=0")
         }
         this.downloadUrl = downloadUrl
         this.localFileName = localFileName
-        reset(true)
         this.weight = weight
+        reset(true)
     }
+
 
     /**
      * 整段代码是同步执行的
@@ -103,19 +119,13 @@ class DownloadTask @JvmOverloads constructor(
      */
     fun stop() {
         Log.e(TAG, "task--stop: $this")
-        isStop.getAndSet(true)
-        getLengthCall?.let {
-            if (!it.isCanceled) {
-                it.cancel()
-                Log.e(TAG, "task--stop--cancel--getLengthCall: $this")
-            }
-        }
         downloadCall?.let {
             if (!it.isCanceled) {
                 it.cancel()
                 Log.e(TAG, "task--stop--cancel--downloadCall: $this")
             }
         }
+        isStop.getAndSet(true)
     }
 
 
@@ -127,26 +137,13 @@ class DownloadTask @JvmOverloads constructor(
 
     private fun checkDownload(downloadUrl: String, localFileName: String) {
         val localFile = File(localFileName)
-        if (isOnlyCheckLocalFileExit && localFile.exists() && localFile.length() > 0) {
-            notifySuccess()
-            return
+        md5?.let {
+            if (localFile.exists() && localFile.length() > 0 && it.equals(MD5Utils.calculateMD5(localFile), true)) {
+                notifySuccess()
+                return
+            }
         }
-        //得到下载内容的大小
-        val serverContentLength: Long = try {
-            getContentLength(downloadUrl)
-        } catch (e: Exception) {
-            handleCancelException(e)
-            return
-        }
-        if (serverContentLength == 0L) {
-            notifyError(Exception("server返回文件长度=0"))
-            return
-        }
-        if (localFile.exists() && !isFileLengthUnKnow(serverContentLength) && localFile.length() != serverContentLength) {
-            //文件有错误（一次错误检测）
-            localFile.delete()
-        }
-        download(serverContentLength, downloadUrl, localFileName)
+        download(downloadUrl, localFileName)
     }
 
 
@@ -158,55 +155,71 @@ class DownloadTask @JvmOverloads constructor(
         notifyPrepare()
     }
 
-    private fun download(serverContentLength: Long, downloadUrl: String, localFileName: String) {
+    private fun download(downloadUrl: String, localFileName: String) {
         var inputStream: InputStream? = null
         var savedFile: RandomAccessFile? = null
-        var downloadLength: Long = 0 //记录已经下载的文件长度
+        var downloadedLength: Long = 0 //记录已经下载的文件长度
         val tempFile = File(getTempFileName(localFileName)) //临时文件
         if (tempFile.exists()) {
             //如果文件存在的话，得到文件的大小
-            downloadLength = tempFile.length()
-            Log.d(TAG, "download: 本地临时文件大小：$downloadLength")
+            downloadedLength = tempFile.length()
         }
-        Log.d(TAG, "download: server文件总大小：$serverContentLength")
         /**
          * HTTP请求是有一个Header的，里面有个Range属性是定义下载区域的，它接收的值是一个区间范围，
          * 比如：Range:bytes=0-10000。这样我们就可以按照一定的规则，将一个大文件拆分为若干很小的部分，
          * 然后分批次的下载，每个小块下载完成之后，再合并到文件中；这样即使下载中断了，重新下载时，
          * 也可以通过文件的字节长度来判断下载的起始点，然后重启断点续传的过程，直到最后完成下载过程。
          */
-        val request = Request.Builder().addHeader("RANGE", "bytes=$downloadLength-") //断点续传要用到的，指示下载的区间
+        val requestBuilder = Request.Builder()
+        addCustomHeaders(requestBuilder)
+        val request = requestBuilder.addHeader("RANGE", "bytes=$downloadedLength-") //断点续传要用到的，指示下载的区间
             .url(downloadUrl).build()
         try {
-            downloadCall = client.newCall(request)
+            downloadCall = client!!.newCall(request)
             val response = downloadCall!!.execute()
-            response?.body() ?: let {
+            if (response.code() !in 200 until 300) {//处理错误码
+                notifyError(Exception(response.body()?.string() ?: "${response.code()}"))
+                return
+            }
+            response.body() ?: let {
                 notifyError(Exception("server返回的数据是空的"))
                 return
             }
             response.body()?.let { responseBody ->
+                val breakpointContentLength = responseBody.contentLength()
+                if (isFileLengthUnKnow(breakpointContentLength)) {//文件长度未知，不支持断点
+                    Log.e(TAG, "download--length: 文件长度未知，不支持断点")
+                    if (tempFile.exists()) {
+                        tempFile.delete()
+                    }
+                    downloadedLength = 0
+                }
+                val totalFileLength = downloadedLength + breakpointContentLength
+                Log.e(TAG, "download--length: 已经下载的length：$downloadedLength")
+                Log.e(TAG, "download--length: server返回的content-length=$breakpointContentLength")
+                Log.e(TAG, "download--length: 计算的文件总大小：$totalFileLength")
+                val localFile = File(localFileName)
+                if (localFile.exists() && !isFileLengthUnKnow(breakpointContentLength) && localFile.length() != totalFileLength) {
+                    Log.e(TAG, "download: 文件有错误,删除本地文件（一次错误检测）localFile=$localFile")
+                    localFile.delete()
+                }
                 inputStream = responseBody.byteStream()
                 //判断文件夹是否存在，不存在创建文件夹
                 createTempFileDir(tempFile)
                 savedFile = RandomAccessFile(tempFile, "rw")
-                savedFile?.seek(downloadLength) //跳过已经下载的字节
-                val b = ByteArray(1024)
+                savedFile?.seek(downloadedLength) //跳过已经下载的字节
+                val buffer = ByteArray(1024)
                 var total = 0
                 var len = 0
                 notifyDownloading()
-                while (!isStop.get() && inputStream?.read(b).also {
-                        if (isStop.get()) {
-                            Log.e(TAG, "download: inputStream.read(b) = $it")
-                        }
-                        len = it ?: -1
-                    } != -1) {
+                while (!isStop.get() && inputStream?.read(buffer).also { len = it ?: -1 } != -1) {
                     total += len
-                    savedFile?.write(b, 0, len)
+                    savedFile?.write(buffer, 0, len)
                     //计算已经下载的百分比
-                    if (isFileLengthUnKnow(serverContentLength)) {
+                    if (isFileLengthUnKnow(breakpointContentLength)) {
                         taskProgressModel.progress = 100f
                     } else {
-                        taskProgressModel.progress = (total + downloadLength) / serverContentLength.toFloat() * 100f
+                        taskProgressModel.progress = (total + downloadedLength) / totalFileLength.toFloat() * 100f
                     }
                     progressSubject.onNext(taskProgressModel)
                     Log.d("----Download", "progress--0: " + taskProgressModel.progress)
@@ -214,8 +227,11 @@ class DownloadTask @JvmOverloads constructor(
                 response.body()?.close()
                 val progress = taskProgressModel.progress
                 if (progress > 100) {
-                    Log.e(TAG, "download: progress =$progress")
-                    throw Exception("progress =" + progress + "下载的文件大小 > server给的大小")
+                    throwException(
+                        "progress =$progress,下载的文件大小 > server给的大小,localFileLength=${tempFile.length()},serverFileLength=$totalFileLength",
+                        localFile,
+                        tempFile,
+                    )
                 }
                 if (progress == 100f) {
                     val success = tempFile.renameTo(File(localFileName)) //重命名
@@ -224,9 +240,15 @@ class DownloadTask @JvmOverloads constructor(
                     } else {
                         notifyError(Exception("重命名失败"))
                     }
-                } else {
+                } else if (isStop.get()) {
                     Log.e(TAG, "task--stopped(没有异常): $this")
                     notifyStop(null)
+                } else {
+                    throwException(
+                        "不是stop，且progress!=100 (说明本地文件的长度!=server文件的长度),localFileLength=${tempFile.length()},serverFileLength=$totalFileLength",
+                        localFile,
+                        tempFile,
+                    )
                 }
             }
         } catch (e: Exception) {
@@ -242,6 +264,31 @@ class DownloadTask @JvmOverloads constructor(
                 e.printStackTrace()
             }
         }
+    }
+
+    private fun throwException(errorMessage: String, localFile: File? = null, tempFile: File? = null) {
+        localFile?.takeIf {
+            it.exists()
+        }?.delete()
+        tempFile?.takeIf {
+            it.exists()
+        }?.delete()
+        throw DownloadException(errorMessage)
+    }
+
+    private fun addCustomHeaders(requestBuilder: Request.Builder) {
+        mHeaders.forEach {
+            requestBuilder.addHeader(it.key, it.value)
+        }
+    }
+
+    @Suppress("unused")
+    fun addHeader(key: String, value: String) {
+        mHeaders[key] = value
+    }
+
+    fun addHeaders(headers: Map<String, String>) {
+        mHeaders.putAll(headers)
     }
 
     private fun handleCancelException(e: Exception) {
@@ -261,47 +308,32 @@ class DownloadTask @JvmOverloads constructor(
                 it.delete()
             }
             if (!it.exists()) {
-                if (it.mkdirs()){
+                if (it.mkdirs()) {
                     Log.e(TAG, "发生严重错误！！！创建要下载的文件夹失败：dir=$it")
                 }
             }
         }
     }
 
-    /**
-     * 得到下载内容的大小
-     * @param downloadUrl
-     * @return
-     */
-    @Throws(IOException::class)
-    private fun getContentLength(downloadUrl: String): Long {
-        val request = Request.Builder().url(downloadUrl).build()
-        getLengthCall = client.newCall(request)
-        val response = getLengthCall!!.execute()
-        if (response != null && response.isSuccessful) {
-            response.body()?.let {
-                val contentLength = it.contentLength()
-                response.body()?.close()
-                if (isFileLengthUnKnow(contentLength)) {
-                    Log.e(TAG, "文件长度未知：getContentLength: contentLength=$contentLength,downloadUrl=$downloadUrl")
-                }
-                return contentLength
-            }
-        }
-        return 0
-    }
-
-    private fun isFileLengthUnKnow(fileLength: Long): Boolean {
-        return fileLength < 0
+    private fun isFileLengthUnKnow(contentLength: Long): Boolean {
+        return contentLength < 0
     }
 
     fun getProgressObservable(): Observable<TaskProgressModel> = progressSubject.toSerialized().doOnSubscribe {
         subscriptions.add(it)
+    }.onErrorReturn {
+        it.printStackTrace()
+        taskProgressModel
     }
 
     fun getProgress(): Float = taskProgressModel.progress
     fun getStateObservable(): Observable<TaskStateModel> = stateSubject.toSerialized().doOnSubscribe {
         subscriptions.add(it)
+    }.onErrorReturn {
+        it.printStackTrace()
+        taskStateModel.state = State.ERROR
+        taskStateModel.exception = it
+        taskStateModel
     }
 
     fun getState(): @State Int = taskStateModel.state
@@ -351,6 +383,7 @@ class DownloadTask @JvmOverloads constructor(
         taskStateModel.exception = e
         taskStateModel.state = State.ERROR
         stateSubject.onNext(taskStateModel)
+        isStop.getAndSet(true)
     }
 
 
