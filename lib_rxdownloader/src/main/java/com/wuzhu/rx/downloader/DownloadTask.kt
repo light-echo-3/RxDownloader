@@ -6,7 +6,7 @@ import com.wuzhu.rx.downloader.exceptions.DownloadException
 import com.wuzhu.rx.downloader.model.State
 import com.wuzhu.rx.downloader.model.TaskProgressModel
 import com.wuzhu.rx.downloader.model.TaskStateModel
-import com.wuzhu.rx.downloader.utils.MD5Utils
+import com.wuzhu.rx.downloader.utils.FilePathUtils
 import io.reactivex.Observable
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.schedulers.Schedulers
@@ -14,6 +14,7 @@ import io.reactivex.subjects.BehaviorSubject
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.InputStream
@@ -29,11 +30,6 @@ class DownloadTask {
 
     companion object {
         private const val TAG = "---DownloadTask"
-
-        @JvmStatic
-        internal fun getTempFileName(localFileName: String): String {
-            return "$localFileName.tmp"
-        }
     }
 
     private val subscriptions = CompositeDisposable()
@@ -57,11 +53,12 @@ class DownloadTask {
     var weight: Float = 1f//记录该任务的权重值.用于多个任务在一起时候计算总进度
 
     /**
-     * 是否仅检查本地文件是否存在
-     * true:仅检查本地文件是否存在，如果存在，就不下载
-     * fixme 鸡肋功能，可改成md5检测
+     * md5检测：
+     * 下载前 & 下载后 检测md5
      */
     var md5: String? = null
+
+    private val business = DownloadTaskBusiness()
 
     var client: OkHttpClient? = null
         get() {
@@ -136,12 +133,29 @@ class DownloadTask {
 
 
     private fun checkDownload(downloadUrl: String, localFileName: String) {
-        val localFile = File(localFileName)
-        md5?.let {
-            if (localFile.exists() && localFile.length() > 0 && it.equals(MD5Utils.calculateMD5(localFile), true)) {
+        if (business.checkFileNameTooLong(localFileName)) {
+            throwException("文件名称过长，不能超过200个字符：localFileName=$localFileName")
+        }
+        md5?.let { _md5 ->
+            //检测本地文件
+            if (business.checkExistedLocalFile(localFileName, _md5)) {
                 notifySuccess()
                 return
             }
+            //检测本地临时文件 - 文件已经下载完成，就差改个名字了
+            val tempFileName = FilePathUtils.getTempFileName(localFileName, _md5)
+            val tempFile = File(tempFileName)
+            if (business.checkTempFileIsDownloadComplete(tempFile, _md5)) {
+                val success = tempFile.renameTo(File(localFileName)) //重命名
+                if (success) {
+                    notifySuccess()
+                } else {
+                    throwException("temp file md5检测成功，重命名失败")
+                }
+                return
+            }
+            //检测本地临时文件 md5
+            business.checkMd5BeforeDownload(tempFile, _md5)
         }
         download(downloadUrl, localFileName)
     }
@@ -159,7 +173,7 @@ class DownloadTask {
         var inputStream: InputStream? = null
         var savedFile: RandomAccessFile? = null
         var downloadedLength: Long = 0 //记录已经下载的文件长度
-        val tempFile = File(getTempFileName(localFileName)) //临时文件
+        val tempFile = File(FilePathUtils.getTempFileName(localFileName, md5)) //临时文件
         if (tempFile.exists()) {
             //如果文件存在的话，得到文件的大小
             downloadedLength = tempFile.length()
@@ -178,20 +192,20 @@ class DownloadTask {
             downloadCall = client!!.newCall(request)
             val response = downloadCall!!.execute()
             if (response.code() !in 200 until 300) {//处理错误码
-                notifyError(Exception(response.body()?.string() ?: "${response.code()}"))
+                handleErrorCode(response, localFileName)
                 return
             }
-            response.body() ?: let {
-                notifyError(Exception("server返回的数据是空的"))
-                return
+            response.body() ?: throwException("server返回的数据是空的")
+            if (!isSupportBreakpointResume(response)) {
+                Log.e(TAG, "download--: server 不支持断点;;$this")
+                tempFile.deleteOnExit()
+                downloadedLength = 0
             }
             response.body()?.let { responseBody ->
                 val breakpointContentLength = responseBody.contentLength()
                 if (isFileLengthUnKnow(breakpointContentLength)) {//文件长度未知，不支持断点
                     Log.e(TAG, "download--length: 文件长度未知，不支持断点")
-                    if (tempFile.exists()) {
-                        tempFile.delete()
-                    }
+                    tempFile.deleteOnExit()
                     downloadedLength = 0
                 }
                 val totalFileLength = downloadedLength + breakpointContentLength
@@ -234,11 +248,14 @@ class DownloadTask {
                     )
                 }
                 if (progress == 100f) {
-                    val success = tempFile.renameTo(File(localFileName)) //重命名
-                    if (success) {
-                        notifySuccess()
+                    if (tempFile.renameTo(localFile)) {//重命名
+                        if (business.checkMd5AfterDownloadComplete(localFile, md5)) {
+                            notifySuccess()
+                        } else {
+                            throwException("下载完成，check md5 失败")
+                        }
                     } else {
-                        notifyError(Exception("重命名失败"))
+                        throwException("重命名失败")
                     }
                 } else if (isStop.get()) {
                     Log.e(TAG, "task--stopped(没有异常): $this")
@@ -266,13 +283,28 @@ class DownloadTask {
         }
     }
 
+    private fun isSupportBreakpointResume(response: Response): Boolean {
+        val result = response.code() == 206 && !response.header("Content-Range").isNullOrBlank()
+        Log.d(TAG, "isSupportBreakpointResume: $result;;$this")
+        return result
+    }
+
+    private fun handleErrorCode(response: Response, localFileName: String) {
+        when (response.code()) {
+            416 -> {//Requested Range Not Satisfiable
+                val tempFile = File(FilePathUtils.getTempFileName(localFileName, md5))
+                tempFile.deleteOnExit()
+            }
+
+            else -> {
+            }
+        }
+        throwException("errorCode=${response.code()},errorBody=${response.body()?.string()}")
+    }
+
     private fun throwException(errorMessage: String, localFile: File? = null, tempFile: File? = null) {
-        localFile?.takeIf {
-            it.exists()
-        }?.delete()
-        tempFile?.takeIf {
-            it.exists()
-        }?.delete()
+        localFile?.deleteOnExit()
+        tempFile?.deleteOnExit()
         throw DownloadException(errorMessage)
     }
 
@@ -305,7 +337,7 @@ class DownloadTask {
         tempFile.parentFile?.let {
             if (it.isFile) {
                 Log.e(TAG, "发生严重错误！！！删除本地文件！！！期望是个文件夹，实际是个文件：dir=$it")
-                it.delete()
+                it.deleteOnExit()
             }
             if (!it.exists()) {
                 if (it.mkdirs()) {
@@ -343,7 +375,7 @@ class DownloadTask {
     }
 
     fun isTempFileExists(): Boolean {
-        return File(getTempFileName(localFileName)).exists()
+        return File(FilePathUtils.getTempFileName(localFileName, md5)).exists()
     }
 
     private fun notifyPrepare() {

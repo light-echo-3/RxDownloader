@@ -3,6 +3,7 @@ package com.wuzhu.rx.downloader
 import android.util.Log
 import androidx.annotation.Keep
 import com.wuzhu.rx.downloader.exceptions.DownloadException
+import com.wuzhu.rx.downloader.utils.FilePathUtils
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -55,11 +56,13 @@ object Downloader {
         return downloadGroup!!
     }
 
+    @Suppress("unused")
     @JvmStatic
     fun isExistDownloadGroup(key: String): Boolean {
         return downloadGroups.containsKey(key)
     }
 
+    @Suppress("unused")
     @JvmStatic
     fun getDownloadGroups() = downloadGroups as Map<String, DownloadGroup>
 
@@ -96,8 +99,8 @@ object Downloader {
     }
 
     @JvmStatic
-    fun deleteTempFile(localFile: String): Boolean {
-        val tempFile = File(DownloadTask.getTempFileName(localFile))
+    fun deleteTempFile(localFile: String, downloadingMd5: String?): Boolean {
+        val tempFile = File(FilePathUtils.getTempFileName(localFile, downloadingMd5))
         if (tempFile.exists()) {
             return tempFile.delete()
         }
