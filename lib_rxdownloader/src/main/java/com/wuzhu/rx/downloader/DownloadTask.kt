@@ -1,5 +1,6 @@
 package com.wuzhu.rx.downloader
 
+import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.Keep
 import com.wuzhu.rx.downloader.exceptions.DownloadException
@@ -7,6 +8,7 @@ import com.wuzhu.rx.downloader.model.State
 import com.wuzhu.rx.downloader.model.TaskProgressModel
 import com.wuzhu.rx.downloader.model.TaskStateModel
 import com.wuzhu.rx.downloader.utils.FilePathUtils
+import com.wuzhu.rx.downloader.utils.MD5Utils
 import io.reactivex.Observable
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.schedulers.Schedulers
@@ -59,6 +61,8 @@ class DownloadTask {
     var md5: String? = null
 
     private val business = DownloadTaskBusiness()
+
+    private var sendProcessTime:Long = 0
 
     var client: OkHttpClient? = null
         get() {
@@ -203,7 +207,8 @@ class DownloadTask {
             }
             response.body()?.let { responseBody ->
                 val breakpointContentLength = responseBody.contentLength()
-                if (isFileLengthUnKnow(breakpointContentLength)) {//文件长度未知，不支持断点
+                val isFileLengthUnKnow = isFileLengthUnKnow(breakpointContentLength)
+                if (isFileLengthUnKnow) {//文件长度未知，不支持断点
                     Log.e(TAG, "download--length: 文件长度未知，不支持断点")
                     tempFile.deleteOnExit()
                     downloadedLength = 0
@@ -213,7 +218,7 @@ class DownloadTask {
                 Log.e(TAG, "download--length: server返回的content-length=$breakpointContentLength")
                 Log.e(TAG, "download--length: 计算的文件总大小：$totalFileLength")
                 val localFile = File(localFileName)
-                if (localFile.exists() && !isFileLengthUnKnow(breakpointContentLength) && localFile.length() != totalFileLength) {
+                if (localFile.exists() && !isFileLengthUnKnow && localFile.length() != totalFileLength) {
                     Log.e(TAG, "download: 文件有错误,删除本地文件（一次错误检测）localFile=$localFile")
                     localFile.delete()
                 }
@@ -222,7 +227,7 @@ class DownloadTask {
                 createTempFileDir(tempFile)
                 savedFile = RandomAccessFile(tempFile, "rw")
                 savedFile?.seek(downloadedLength) //跳过已经下载的字节
-                val buffer = ByteArray(1024)
+                val buffer = ByteArray(1024)//小buffer反而下载更快
                 var total = 0
                 var len = 0
                 notifyDownloading()
@@ -230,13 +235,14 @@ class DownloadTask {
                     total += len
                     savedFile?.write(buffer, 0, len)
                     //计算已经下载的百分比
-                    if (isFileLengthUnKnow(breakpointContentLength)) {
+                    if (isFileLengthUnKnow) {
                         taskProgressModel.progress = 100f
                     } else {
                         taskProgressModel.progress = (total + downloadedLength) / totalFileLength.toFloat() * 100f
                     }
-                    progressSubject.onNext(taskProgressModel)
-                    Log.d("----Download", "progress--0: " + taskProgressModel.progress)
+                    if (taskProgressModel.progress == 100f || checkCanSendProcess()) {
+                        progressSubject.onNext(taskProgressModel)
+                    }
                 }
                 response.body()?.close()
                 val progress = taskProgressModel.progress
@@ -249,7 +255,7 @@ class DownloadTask {
                 }
                 if (progress == 100f) {
                     if (tempFile.renameTo(localFile)) {//重命名
-                        if (business.checkMd5AfterDownloadComplete(localFile, md5)) {
+                        if (business.checkMd5AfterDownloadComplete(localFile, md5, MD5Utils.getContentMD5Header(response.headers()))) {
                             notifySuccess()
                         } else {
                             throwException("下载完成，check md5 失败")
@@ -281,6 +287,14 @@ class DownloadTask {
                 e.printStackTrace()
             }
         }
+    }
+
+    private fun checkCanSendProcess(): Boolean {
+        if (SystemClock.uptimeMillis() - sendProcessTime > 16) {
+            sendProcessTime = SystemClock.uptimeMillis()
+            return true
+        }
+        return false
     }
 
     private fun isSupportBreakpointResume(response: Response): Boolean {
@@ -351,15 +365,15 @@ class DownloadTask {
         return contentLength < 0
     }
 
-    fun getProgressObservable(): Observable<TaskProgressModel> = progressSubject.toSerialized().doOnSubscribe {
+    fun getProgressObservable(): Observable<TaskProgressModel> = progressSubject.doOnSubscribe {
         subscriptions.add(it)
     }.onErrorReturn {
         it.printStackTrace()
         taskProgressModel
-    }
+    }.observeOn(Schedulers.io())
 
     fun getProgress(): Float = taskProgressModel.progress
-    fun getStateObservable(): Observable<TaskStateModel> = stateSubject.toSerialized().doOnSubscribe {
+    fun getStateObservable(): Observable<TaskStateModel> = stateSubject.doOnSubscribe {
         subscriptions.add(it)
     }.onErrorReturn {
         it.printStackTrace()

@@ -9,7 +9,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * @author Hdq on 2021/3/10.
+ * @author hardy on 2021/3/10.
  */
 @Keep
 object Downloader {
@@ -51,9 +51,7 @@ object Downloader {
     @JvmStatic
     @Synchronized
     fun findOrCreateDownloadGroup(key: String, limit: Int = 5): DownloadGroup {
-        var downloadGroup = downloadGroups[key]
-        downloadGroup ?: run { downloadGroup = createDownloadGroup(key, limit) }
-        return downloadGroup!!
+        return downloadGroups[key] ?: createDownloadGroup(key, limit)
     }
 
     @Suppress("unused")

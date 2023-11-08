@@ -1,4 +1,3 @@
 # RxDownloader
 rxjava download
-https://github.com/hardy666666/RxDownloader
-
+https://github.com/light-echo-3/RxDownloader
