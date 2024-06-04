@@ -11,4 +11,5 @@ https://github.com/light-echo-3/RxDownloader
 
 ## TODO
 分块下载。  
+支持N级分组。  
 写个Flow版本。
